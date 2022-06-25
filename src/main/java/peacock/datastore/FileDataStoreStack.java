@@ -1,10 +1,6 @@
 package peacock.datastore;
 
-import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
+
 
 /**
  * FileDataStoreStack implements a persistent queue that allows data to be read, write and remove in LIFO order
@@ -24,27 +20,27 @@ import java.nio.file.StandardOpenOption;
  * | Data 0, Data 1, ..... Data N, 0x7E, Data length, ~Data length, Data Hash
  *
  */
-public class FileDataStoreStack implements DataStore{
+public class FileDataStoreStack implements DataStore {
 
-    private final FileChannel fileChannel;
-    private final long capacity;
-    private long headIndex = 0;
-    private long count;
-
-    public FileDataStoreStack(String queueName, Path directory, long limit) throws IOException {
-        capacity = limit;
-        fileChannel = FileChannel.open(directory.resolve((queueName+".lifo")), StandardOpenOption.READ,
-                    StandardOpenOption.WRITE,StandardOpenOption.CREATE);
-    }
 
     @Override
-    public boolean write(ByteBuffer data) {
+    public boolean write(byte[] b, int off, int len) {
         return false;
     }
 
     @Override
-    public boolean read(ByteBuffer data) {
+    public boolean write(byte[] b) {
         return false;
+    }
+
+    @Override
+    public int read(byte[] b, int off, int len) {
+        return 0;
+    }
+
+    @Override
+    public int read(byte[] b) {
+        return 0;
     }
 
     @Override
@@ -53,13 +49,13 @@ public class FileDataStoreStack implements DataStore{
     }
 
     @Override
-    public void remove() {
-
+    public boolean sync() {
+        return false;
     }
 
     @Override
-    public boolean sync() {
-        return false;
+    public void remove() {
+
     }
 
     @Override
@@ -68,25 +64,18 @@ public class FileDataStoreStack implements DataStore{
     }
 
     @Override
-    public long capacity() {
-        return capacity;
+    public long count() {
+        return 0;
     }
 
     @Override
-    public long size() {
+    public long capacity() {
         return 0;
     }
 
     @Override
     public long usage() {
-        long usage = 0;
-        try {
-            usage =  fileChannel.position();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
-        return usage;
+        return 0;
     }
 
     @Override
@@ -106,6 +95,6 @@ public class FileDataStoreStack implements DataStore{
 
     @Override
     public void close() throws Exception {
-        fileChannel.close();
+
     }
 }

@@ -1,10 +1,11 @@
 package peacock.datastore;
 
+import java.io.EOFException;
+import java.io.File;
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
+import java.io.RandomAccessFile;
+
+import static peacock.datastore.DataStoreUtil.*;
 
 /**
  * FileDataStoreQueue implements a persistent queue that allows data to be read, write and remove in FIFO order
@@ -28,98 +29,36 @@ import java.nio.file.StandardOpenOption;
  */
 public class FileDataStoreQueue implements DataStore {
 
+    private final static int ERROR_CODE_OK = 0;
+    private final static int ERROR_CODE_IO_ERROR = 1;
     private final static int MAGIC_NUMBER = 0x34719e13;
     private final static int FRAME_IDENTIFIER = 0x5b77f49e;
-
-    private final FileChannel fileChannel;
-    private final ByteBuffer metaData;
-    private final ByteBuffer writeHeader, readHeader;
-    private final ByteBuffer[] writeBuffer;
+    private final RandomAccessFile file;
+    private final byte[] metaData, header;
     private final long capacity;
     private final int offset;
     private long readIndex;
     private long writeIndex;
     private long count;
     private boolean isMetaDataUpdated;
-    private int errorCode = NO_ERROR;
+    private int errorCode;
     private Exception exception;
 
-    public FileDataStoreQueue(String queueName, Path directory, long limit) throws IOException {
-        String fileName = queueName + ".fifo";
-        metaData = ByteBuffer.allocate(32);
-        writeHeader = ByteBuffer.allocate(16);
-        readHeader = ByteBuffer.allocate(16);
-        writeBuffer = new ByteBuffer[2];
-        offset = metaData.capacity();
+
+    public FileDataStoreQueue(String queueName, String directory, long limit) throws IOException {
+        metaData = new byte[32];
+        header = new byte[16];
         capacity = limit;
-        fileChannel = FileChannel.open(directory.resolve(fileName), StandardOpenOption.READ,
-                StandardOpenOption.WRITE, StandardOpenOption.CREATE);
+        offset = metaData.length*2;
+        file = new RandomAccessFile(new File(directory, queueName + ".fifo"), "rw");
         if (!readMetaData()) {
+            readIndex = offset;
+            writeIndex = offset;
             writeMetaData();
         }
     }
 
-    private boolean readMetaData() {
-
-        boolean status = false;
-        try {
-            for (int i = 0; i < 2; i++) {
-
-                fileChannel.position(i * metaData.capacity());
-                metaData.clear();
-                if (fileChannel.read(metaData) == metaData.capacity()) {
-                    metaData.flip();
-                    int magic = metaData.getInt();
-                    int hash = metaData.getInt();
-                    if (magic == MAGIC_NUMBER && hash == metaData.hashCode()) {
-                        readIndex = metaData.getLong();
-                        writeIndex = metaData.getLong();
-                        count = metaData.getLong();
-                        status = true;
-                        break;
-                    }
-                }
-            }
-        } catch (IOException ignore) {
-
-        }
-
-        return status;
-    }
-
-    private boolean writeMetaData() {
-
-        boolean status = false;
-        metaData.clear();
-        metaData.putInt(MAGIC_NUMBER);
-        metaData.putInt(0);
-        metaData.putLong(readIndex);
-        metaData.putLong(writeIndex);
-        metaData.putLong(count);
-        metaData.flip();
-        metaData.position(8);
-        int hash = metaData.hashCode();
-        metaData.putInt(4, hash);
-
-        try {
-            for (int i = 0; i < 2; i++) {
-
-                fileChannel.position(i * metaData.capacity());
-                metaData.clear();
-                if (fileChannel.write(metaData) == metaData.capacity()) {
-                    fileChannel.force(false);
-                    status = true;
-                }
-
-            }
-        } catch (IOException ignore) {
-
-        }
-
-        return status;
-    }
-
-    private long getUsedSpace(){
+    private long getUsedSpace() {
         long used;
         if (writeIndex >= readIndex) {
             // |---offset---readIndex----writeIndex----limit-|
@@ -133,7 +72,7 @@ public class FileDataStoreQueue implements DataStore {
     }
 
 
-    private long getFreeSpace(){
+    private long getFreeSpace() {
         long free;
 
         if (writeIndex >= readIndex) {
@@ -147,170 +86,165 @@ public class FileDataStoreQueue implements DataStore {
         return free;
     }
 
-
-    @Override
-    public synchronized boolean write(ByteBuffer data) {
+    private boolean readMetaData() {
 
         boolean status = false;
-        int dlc = data.remaining();
-        int flc = dlc + writeHeader.capacity();
-        errorCode = NO_ERROR;
+        errorCode = ERROR_CODE_OK;
+        exception = null;
+        for (int i = 0; i < 2; i++) {
+            int pos = i * metaData.length;
+            try {
+                file.seek(pos);
+                file.readFully(metaData);
+                int magic = getInt(metaData, 0);
+                int hash = getInt(metaData, 4);
+                if (magic == MAGIC_NUMBER && hash == getHashCode(metaData, 8, metaData.length - 8)) {
+                    readIndex = getLong(metaData, 8);
+                    writeIndex = getLong(metaData, 16);
+                    count = getLong(metaData, 24);
+                    status = true;
+                    break;
+                }
+            } catch (IOException e) {
+                errorCode = ERROR_CODE_IO_ERROR;
+                exception = e;
+            }
+        }
+
+        return status;
+    }
+
+
+    private boolean writeMetaData() {
+
+        boolean status = false;
+        errorCode = ERROR_CODE_OK;
+        exception = null;
+        putInt(MAGIC_NUMBER, metaData, 0);
+        putLong(readIndex, metaData, 8);
+        putLong(writeIndex, metaData, 16);
+        putLong(count, metaData, 24);
+        int hash = getHashCode(metaData, 8, metaData.length - 8);
+        putInt(hash, metaData, 4);
+
+        for (int i = 0; i < 2; i++) {
+            int pos = i * metaData.length;
+            try {
+                file.seek(pos);
+                file.write(metaData);
+                file.getFD().sync();
+                status = true;
+            } catch (IOException e) {
+                errorCode = ERROR_CODE_IO_ERROR;
+                exception = e;
+            }
+        }
+
+        return status;
+    }
+
+    @Override
+    public boolean write(byte[] b, int off, int len) {
+        boolean status = false;
+        int flc = len + header.length;
+        errorCode = ERROR_CODE_OK;
         exception = null;
         if (getFreeSpace() >= flc) {
-            writeHeader.clear();
-            writeHeader.putInt(FRAME_IDENTIFIER);
-            writeHeader.putInt(dlc);
-            writeHeader.putInt(~dlc);
-            writeHeader.putInt(data.hashCode());
-            writeHeader.flip();
-            writeBuffer[0] = writeHeader;
-            writeBuffer[1] = data;
+            putInt(FRAME_IDENTIFIER, header, 0);
+            putInt(len, header, 4);
+            putInt(~len, header, 8);
+            int hash = getHashCode(b, off, len);
+            putInt(hash, header, 12);
+
             try {
-                fileChannel.position(writeIndex);
-                if (flc == fileChannel.write(writeBuffer)) {
-                    status = true;
-                    isMetaDataUpdated = true;
-                    count++;
-                    writeIndex += flc;
-                    if (writeIndex >= capacity)
-                        writeIndex = offset;
-                }
-            } catch (IOException e) {
-                errorCode = IO_ERROR;
-                exception = e;
-            }
-        }
-
-        return status;
-    }
-
-    @Override
-    public synchronized boolean read(ByteBuffer data) {
-
-        boolean status = false;
-        errorCode = NO_ERROR;
-        exception = null;
-        if (getUsedSpace() >= readHeader.capacity()) {
-            int size = 0;
-            try {
-                readHeader.clear();
-                fileChannel.position(readIndex);
-                size = fileChannel.read(readHeader);
-            } catch (IOException e) {
-                errorCode = IO_ERROR;
-                exception = e;
-            }
-            if (size == readHeader.capacity()) {
-                readHeader.flip();
-                int fid = readHeader.getInt();
-                int dlc = readHeader.getInt();
-                int negated = readHeader.getInt();
-                int hash = readHeader.getInt();
-                if (fid == FRAME_IDENTIFIER && (dlc == (~negated))) {
-                    if (data.remaining() >= dlc) {
-                        int dataPos = data.position();
-                        int dataLimit = data.limit();
-                        data.limit(dataPos + dlc);
-                        try {
-                            size = fileChannel.read(data);
-                            if (size == dlc) {
-                                data.position(dataPos);
-                                if (data.hashCode() == hash) {
-                                    data.position(dataPos + dlc);
-                                    status = true;
-                                }
-                            }
-                        } catch (IOException e) {
-                            errorCode = IO_ERROR;
-                            exception = e;
-                        } finally {
-                            if (!status)
-                                data.position(dataPos);
-                        }
-                        data.limit(dataLimit);
-                    }
-                }
-            }
-        }
-
-        return status;
-    }
-
-
-    @Override
-    public synchronized int readLength() {
-
-        int length = -1;
-        errorCode = NO_ERROR;
-        exception = null;
-        if (getUsedSpace() >= readHeader.capacity()) {
-            try {
-                readHeader.clear();
-                fileChannel.position(readIndex);
-                int size = fileChannel.read(readHeader);
-                if (size == readHeader.capacity()) {
-                    readHeader.flip();
-                    int fid = readHeader.getInt();
-                    int dlc = readHeader.getInt();
-                    int negated = readHeader.getInt();
-
-                    if (fid == FRAME_IDENTIFIER && (dlc == (~negated))) {
-                        length = dlc;
-                    }
-                }
-
-            } catch (IOException e) {
-                errorCode = IO_ERROR;
-                exception = e;
-            }
-        }
-
-        return length;
-    }
-
-    @Override
-    public synchronized void remove() {
-        errorCode = NO_ERROR;
-        exception = null;
-        if (getUsedSpace() >= readHeader.capacity()) {
-            try {
-                readHeader.clear();
-                fileChannel.position(readIndex);
-                int size = fileChannel.read(readHeader);
+                file.seek(writeIndex);
+                file.write(header);
+                file.write(b, off, len);
+                status = true;
                 isMetaDataUpdated = true;
-                if (size == -1) {
-                    // Pointer reached end-of-file
-                    // Reset the index
-                    readIndex = offset;
-                } else if (size == readHeader.capacity()) {
-                    readHeader.flip();
-                    int fid = readHeader.getInt();
-                    int dlc = readHeader.getInt();
-                    int negated = readHeader.getInt();
-                    if (fid == FRAME_IDENTIFIER && (dlc == (~negated))) {
-                        count = count > 0 ? count - 1 : 0;
-                        readIndex += (dlc + readHeader.capacity());
-                        if (readIndex >= capacity)
-                            readIndex = offset;
-                    } else {
-                        // There is corruption in the file pointers
-                        // Let's drop data until write index
-                        count = 0;
-                        readIndex = writeIndex;
-                    }
-                }
+                count++;
+                writeIndex += flc;
+                if (writeIndex >= capacity)
+                    writeIndex = offset;
 
             } catch (IOException e) {
-                errorCode = IO_ERROR;
+                errorCode = ERROR_CODE_IO_ERROR;
                 exception = e;
             }
         }
+
+        return status;
     }
 
     @Override
-    public synchronized boolean sync() {
+    public boolean write(byte[] b) {
+        return write(b, 0, b.length);
+    }
+
+    @Override
+    public int read(byte[] b, int off, int len) {
+        int size = -1;
+        errorCode = ERROR_CODE_OK;
+        exception = null;
+        if (getUsedSpace() >= header.length) {
+            try {
+                file.seek(readIndex);
+                file.readFully(header);
+                int fid = getInt(header, 0);
+                int dlc = getInt(header, 4);
+                int negated = getInt(header, 8);
+                int hash = getInt(header, 12);
+                if (fid == FRAME_IDENTIFIER && (dlc == (~negated))) {
+                    if (len >= dlc) {
+                        file.readFully(b, off, dlc);
+                        if (getHashCode(b, off, dlc) == hash) {
+                            size = dlc;
+                        }
+                    }
+                }
+            } catch (IOException e) {
+                size = 0;
+                errorCode = ERROR_CODE_IO_ERROR;
+                exception = e;
+            }
+        }
+
+        return size;
+    }
+
+    @Override
+    public int read(byte[] b) {
+        return read(b, 0, b.length);
+    }
+
+    @Override
+    public int readLength() {
+        int size = -1;
+        errorCode = ERROR_CODE_OK;
+        exception = null;
+        if (getUsedSpace() >= header.length) {
+            try {
+                file.seek(readIndex);
+                file.readFully(header);
+                int fid = getInt(header, 0);
+                int dlc = getInt(header, 4);
+                int negated = getInt(header, 8);
+                if (fid == FRAME_IDENTIFIER && (dlc == (~negated))) {
+                    size = dlc;
+                }
+            } catch (IOException e) {
+                size = 0;
+                errorCode = ERROR_CODE_IO_ERROR;
+                exception = e;
+            }
+        }
+        return size;
+    }
+
+    @Override
+    public boolean sync() {
         boolean status = true;
-        errorCode = NO_ERROR;
+        errorCode = ERROR_CODE_OK;
         exception = null;
         if (isMetaDataUpdated) {
             isMetaDataUpdated = false;
@@ -320,39 +254,75 @@ public class FileDataStoreQueue implements DataStore {
     }
 
     @Override
-    public synchronized boolean isEmpty() {
-        errorCode = NO_ERROR;
+    public void remove() {
+        errorCode = ERROR_CODE_OK;
         exception = null;
-        return getUsedSpace() >= readHeader.capacity();
+        if (getUsedSpace() >= header.length) {
+
+            try {
+                file.seek(readIndex);
+                file.readFully(header);
+                int fid = getInt(header, 0);
+                int dlc = getInt(header, 4);
+                int negated = getInt(header, 8);
+                isMetaDataUpdated = true;
+                if (fid == FRAME_IDENTIFIER && (dlc == (~negated))) {
+                    count = count > 0 ? count - 1 : 0;
+                    readIndex += (dlc + header.length);
+                    if (readIndex >= capacity)
+                        readIndex = offset;
+                } else {
+                    // There is corruption in the file pointers
+                    // Let's drop data until write index
+                    count = 0;
+                    readIndex = writeIndex;
+                }
+            } catch (EOFException e) {
+                // Pointer reached end-of-file
+                // Reset the index
+                isMetaDataUpdated = true;
+                readIndex = offset;
+            } catch (IOException e) {
+                errorCode = ERROR_CODE_IO_ERROR;
+                exception = e;
+            }
+        }
+    }
+
+    @Override
+    public boolean isEmpty() {
+        errorCode = ERROR_CODE_OK;
+        exception = null;
+        return getUsedSpace() >= header.length;
+    }
+
+    @Override
+    public long count() {
+        errorCode = ERROR_CODE_OK;
+        exception = null;
+        return count;
     }
 
     @Override
     public long capacity() {
-        errorCode = NO_ERROR;
+        errorCode = ERROR_CODE_OK;
         exception = null;
         return capacity;
     }
 
     @Override
-    public long size() {
-        errorCode = NO_ERROR;
-        exception = null;
-        return count;
-    }
-
-
-    @Override
-    public synchronized long usage() {
-        errorCode = NO_ERROR;
+    public long usage() {
+        errorCode = ERROR_CODE_OK;
         exception = null;
         return getUsedSpace();
     }
 
     @Override
-    public synchronized long free() {
-        errorCode = NO_ERROR;
+    public long free() {
+        errorCode = ERROR_CODE_OK;
         exception = null;
         return getFreeSpace();
+
     }
 
     @Override
@@ -367,6 +337,7 @@ public class FileDataStoreQueue implements DataStore {
 
     @Override
     public void close() throws Exception {
-        fileChannel.close();
+        file.getFD().sync();
+        file.close();
     }
 }

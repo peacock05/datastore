@@ -11,8 +11,5 @@ public class FileDataStoreStackTest {
     @Test
     public void testDataStoreStack() throws IOException {
 
-        DataStore store = new FileDataStoreStack("testQueue",
-                Files.createTempDirectory("datastore"),5_000_000);
-        Assertions.assertNotNull(store,"Store cannot be empty");
     }
 }
