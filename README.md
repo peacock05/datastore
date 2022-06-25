@@ -1,41 +1,123 @@
-# Under development
 # Datastore
 
-Datastore project provides Java library for reading and writing data in FIFO and LIFO order from the files.
+Datastore project provides Java library to read, write and delete arrays in FIFO and LIFO order. It uses file to 
+back up the arrays
 
-# Usage
+Provide simple `write()` `read()` and `remove()` method to store, read and delete the array.
 
+### Download
+
+[Datastore jar downloads](https://github.com/peacock05?tab=packages&repo_name=datastore) are available from GitHub Packages.
+
+### Requirements
+#### Minimum Java version
+- Datastore 1.0 and newer: Java 8
+
+### Usage
+
+#### Example using FIFO queue
 ```java
 
 import peacock.datastore.DataStore;
 import peacock.datastore.FileDataStoreStack;
-
 import java.nio.ByteBuffer;
-import java.nio.file.Paths;
 
 public class MainApp {
     public static void main(String[] args) {
-        try (DataStore store = new FileDataStoreStack("backup", Paths.get("database"), 5_000_000)) {
+        
+        try (DataStore store = new FileDataStoreQueue("backup", "/database",5000000)) {
             
-            // Prepare the data to write
-            ByteBuffer data = ByteBuffer.allocate(1024);
-            data.putFloat(23.78);
-            data.putInt(34654);
+            // Prepare 1st data
+            ByteBuffer data = ByteBuffer.allocate(120);
+            data.putFloat(23.43f);
+            data.putInt(98);
+            data.putLong(9841893746890L);
             data.flip();
             
-            // Write data to file in LIFO order
-            store.write(data);
+            // Write 1st data
+            store.write(data.array(),data.position(),data.remaining());
             
             // Prepare second data
             data.reset();
-            data.putFloat(23.78);
-            data.putInt(34654);
+            data.putFloat(29.83f);
+            data.putInt(98345);
+            data.putLong(1498794656586L);
+            data.putFloat(78.83f);
+            data.putInt(8767);
             data.flip();
             
-            // Write data to file in LIFO order
-            store.write(data);
+            // Write 2nd data 
+            store.write(data.array(),data.position(),data.remaining());
+            
+            // Read 1st data 
+            store.read(data.array());
+            
+            // Remove 1st data
+            store.remove();
+            
+            // Read 2nd data
+            store.read(data.array());
+            
+            // Remove 2nd data
+            store.remove();
+            
         }
     }
 }
 
 ```
+
+#### Example using LIFO queue
+
+```java
+import peacock.datastore.DataStore;
+import peacock.datastore.FileDataStoreStack;
+import java.nio.ByteBuffer;
+
+public class MainApp {
+    public static void main(String[] args) {
+        
+        try (DataStore store = new FileDataStoreStack("backup", "/database",5000000)) {
+            
+            // Prepare 1st data
+            ByteBuffer data = ByteBuffer.allocate(120);
+            data.putFloat(23.43f);
+            data.putInt(98);
+            data.putLong(9841893746890L);
+            data.flip();
+            
+            // Write 1st data
+            store.write(data.array(),data.position(),data.remaining());
+            
+            // Prepare second data
+            data.reset();
+            data.putFloat(29.83f);
+            data.putInt(98345);
+            data.putLong(1498794656586L);
+            data.putFloat(78.83f);
+            data.putInt(8767);
+            data.flip();
+            
+            // Write 2nd data 
+            store.write(data.array(),data.position(),data.remaining());
+            
+            // Read 2nd data 
+            store.read(data.array());
+            
+            // Remove 2nd data
+            store.remove();
+            
+            // Read 1st data
+            store.read(data.array());
+            
+            // Remove 1st data
+            store.remove();
+            
+        }
+    }
+}
+```
+
+### License
+
+Distributed under the MIT License. See `LICENSE.txt` for more information.

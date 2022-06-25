@@ -45,6 +45,13 @@ public class FileDataStoreQueue implements DataStore {
     private Exception exception;
 
 
+    /**
+     * Create the file based persistent data store to read, write and delete the data in FIFO order.
+     * @param queueName Name of the queue
+     * @param directory Directory to store the file
+     * @param limit Maximum amount of space.
+     * @throws IOException Upon error in creating, reading or writing to the file.
+     */
     public FileDataStoreQueue(String queueName, String directory, long limit) throws IOException {
         metaData = new byte[32];
         header = new byte[16];

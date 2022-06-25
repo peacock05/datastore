@@ -3,14 +3,14 @@ package peacock.datastore;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
-import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 
 public class FileDataStoreQueueTest {
 
     @Test
-    public void testFifoDataStore() throws IOException {
+    public void testFifoDataStore() throws Exception {
 
         DataStore store = new FileDataStoreQueue("testQueue",
                 Files.createTempDirectory("datastore").toString(),5_000_000);
@@ -20,7 +20,6 @@ public class FileDataStoreQueueTest {
         Assertions.assertEquals(0,store.usage());
         Assertions.assertTrue(store.free()>4999100,"Free can't be less this size");
         ByteBuffer testData = ByteBuffer.allocate(120);
-
         testData.putFloat(23.43f);
         testData.putInt(98);
         testData.putLong(9841893746890L);
@@ -88,5 +87,19 @@ public class FileDataStoreQueueTest {
 
         store.remove();
         Assertions.assertFalse(store.isEmpty(),"Data store must be empty");
+        byte[] testExpectedString = "DataStore is simple and yet very powerful".getBytes(StandardCharsets.UTF_8);
+        byte[] testActualString = new byte[testExpectedString.length];
+        Assertions.assertTrue(store.write(testExpectedString));
+        Assertions.assertEquals(testExpectedString.length,store.read(testActualString));
+        Assertions.assertArrayEquals(testExpectedString,testActualString);
+
+        store.remove();
+        byte[] testExpectedArray = new byte[]{1,2,3,4,5,6,7,8,9,11,22,33,44,55,66,77,88,99};
+        byte[] testActualArray = new byte[]{1,2,3,4,5,6,7,8,9,0,0,0,0,0,0,0,0,0};
+        Assertions.assertTrue(store.write(testExpectedArray,9,9));
+        Assertions.assertEquals(9,store.read(testActualArray,9,9));
+        Assertions.assertArrayEquals(testExpectedArray,testActualArray);
+
+        store.close();
     }
 }

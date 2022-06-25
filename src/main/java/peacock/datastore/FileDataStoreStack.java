@@ -45,6 +45,13 @@ public class FileDataStoreStack implements DataStore {
     private int backUpLength;
     private int backUpHash;
 
+    /**
+     * Create the file based persistent data store to read, write and delete the data in LIFO order.
+     * @param queueName Name of the queue
+     * @param directory Directory to store the file
+     * @param limit Maximum amount of space.
+     * @throws IOException Upon error in creating, reading or writing to the file.
+     */
     public FileDataStoreStack(String queueName, String directory, long limit) throws IOException {
         metaData = new byte[32];
         header = new byte[16];
