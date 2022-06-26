@@ -5,6 +5,10 @@ back up the arrays
 
 Provide simple `write()` `read()` and `remove()` method to store, read and delete the array.
 
+### Download
+
+[Datastore jar downloads](https://github.com/peacock05?tab=packages&repo_name=datastore) are available from GitHub Packages.
+
 ### Requirements
 #### Minimum Java version
 - Datastore 1.0 and newer: Java 8
@@ -15,7 +19,8 @@ Provide simple `write()` `read()` and `remove()` method to store, read and delet
 
 ```java
 
-import DataStore;
+import io.github.peacock05.datastore.DataStore;
+import io.github.peacock05.datastore.FileDataStoreQueue;
 
 import java.nio.ByteBuffer;
 
@@ -33,7 +38,8 @@ public class MainApp {
 
             // Write 1st data
             store.write(data.array(), data.position(), data.remaining());
-
+            // Write 1st data to disk
+            store.sync(); 
             // Prepare second data
             data.reset();
             data.putFloat(29.83f);
@@ -45,19 +51,28 @@ public class MainApp {
 
             // Write 2nd data 
             store.write(data.array(), data.position(), data.remaining());
-
+            // Write 2nd data to disk
+            store.sync();
+            
             // Read 1st data 
             store.read(data.array());
 
             // Remove 1st data
             store.remove();
-
+            // Remove 1st data from disk
+            store.sync();
+            
             // Read 2nd data
             store.read(data.array());
 
             // Remove 2nd data
             store.remove();
+            // Remove 2nd data from disk
+            store.sync();
 
+        } catch (IOException e){
+            // Unable to create the queue.
+            e.printStackTrace();
         }
     }
 }
@@ -67,9 +82,10 @@ public class MainApp {
 #### Example using LIFO queue
 
 ```java
-import DataStore;
-import FileDataStoreStack;
+import io.github.peacock05.datastore.DataStore;
+import io.github.peacock05.datastore.FileDataStoreStack;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 
 public class MainApp {
@@ -86,7 +102,8 @@ public class MainApp {
 
             // Write 1st data
             store.write(data.array(), data.position(), data.remaining());
-
+            // Write 1st data to disk
+            store.sync();
             // Prepare second data
             data.reset();
             data.putFloat(29.83f);
@@ -98,23 +115,36 @@ public class MainApp {
 
             // Write 2nd data 
             store.write(data.array(), data.position(), data.remaining());
+            // Write 2nd data to disk
+            store.sync();
 
             // Read 2nd data 
             store.read(data.array());
 
             // Remove 2nd data
             store.remove();
-
+            // Remove 2nd data to disk
+            store.sync();
             // Read 1st data
             store.read(data.array());
 
             // Remove 1st data
             store.remove();
+            // Remove 2nd data to disk
+            store.sync();
 
+        } catch (IOException e){
+            // Unable to create the queue.
+            e.printStackTrace();
         }
     }
 }
 ```
+
+### Developer Guide
+
+The Developer guide is available at [https://github.com/peacock05/datastore/wiki/Developer-Guide](https://github.com/peacock05/datastore/wiki/Developer-Guide)
+
 
 ### License
 
