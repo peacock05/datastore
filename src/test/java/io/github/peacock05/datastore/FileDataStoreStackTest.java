@@ -1,4 +1,4 @@
-package peacock.datastore;
+package io.github.peacock05.datastore;
 
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;

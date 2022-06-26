@@ -1,11 +1,9 @@
-package peacock.datastore;
+package io.github.peacock05.datastore;
 
 import java.io.EOFException;
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
-
-import static peacock.datastore.DataStoreUtil.*;
 
 /**
  * FileDataStoreQueue implements a persistent queue that allows data to be read, write and remove in FIFO order
@@ -103,12 +101,12 @@ public class FileDataStoreQueue implements DataStore {
             try {
                 file.seek(pos);
                 file.readFully(metaData);
-                int magic = getInt(metaData, 0);
-                int hash = getInt(metaData, 4);
-                if (magic == MAGIC_NUMBER && hash == getHashCode(metaData, 8, metaData.length - 8)) {
-                    readIndex = getLong(metaData, 8);
-                    writeIndex = getLong(metaData, 16);
-                    count = getLong(metaData, 24);
+                int magic = DataStoreUtil.getInt(metaData, 0);
+                int hash = DataStoreUtil.getInt(metaData, 4);
+                if (magic == MAGIC_NUMBER && hash == DataStoreUtil.getHashCode(metaData, 8, metaData.length - 8)) {
+                    readIndex = DataStoreUtil.getLong(metaData, 8);
+                    writeIndex = DataStoreUtil.getLong(metaData, 16);
+                    count = DataStoreUtil.getLong(metaData, 24);
                     status = true;
                     break;
                 }
@@ -127,12 +125,12 @@ public class FileDataStoreQueue implements DataStore {
         boolean status = false;
         errorCode = ERROR_CODE_OK;
         exception = null;
-        putInt(MAGIC_NUMBER, metaData, 0);
-        putLong(readIndex, metaData, 8);
-        putLong(writeIndex, metaData, 16);
-        putLong(count, metaData, 24);
-        int hash = getHashCode(metaData, 8, metaData.length - 8);
-        putInt(hash, metaData, 4);
+        DataStoreUtil.putInt(MAGIC_NUMBER, metaData, 0);
+        DataStoreUtil.putLong(readIndex, metaData, 8);
+        DataStoreUtil.putLong(writeIndex, metaData, 16);
+        DataStoreUtil.putLong(count, metaData, 24);
+        int hash = DataStoreUtil.getHashCode(metaData, 8, metaData.length - 8);
+        DataStoreUtil.putInt(hash, metaData, 4);
 
         for (int i = 0; i < 2; i++) {
             int pos = i * metaData.length;
@@ -157,11 +155,11 @@ public class FileDataStoreQueue implements DataStore {
         errorCode = ERROR_CODE_OK;
         exception = null;
         if (getFreeSpace() >= flc) {
-            putInt(FRAME_IDENTIFIER, header, 0);
-            putInt(len, header, 4);
-            putInt(~len, header, 8);
-            int hash = getHashCode(b, off, len);
-            putInt(hash, header, 12);
+            DataStoreUtil.putInt(FRAME_IDENTIFIER, header, 0);
+            DataStoreUtil.putInt(len, header, 4);
+            DataStoreUtil.putInt(~len, header, 8);
+            int hash = DataStoreUtil.getHashCode(b, off, len);
+            DataStoreUtil.putInt(hash, header, 12);
 
             try {
                 file.seek(writeIndex);
@@ -197,14 +195,14 @@ public class FileDataStoreQueue implements DataStore {
             try {
                 file.seek(readIndex);
                 file.readFully(header);
-                int fid = getInt(header, 0);
-                int dlc = getInt(header, 4);
-                int negated = getInt(header, 8);
-                int hash = getInt(header, 12);
+                int fid = DataStoreUtil.getInt(header, 0);
+                int dlc = DataStoreUtil.getInt(header, 4);
+                int negated = DataStoreUtil.getInt(header, 8);
+                int hash = DataStoreUtil.getInt(header, 12);
                 if (fid == FRAME_IDENTIFIER && (dlc == (~negated))) {
                     if (len >= dlc) {
                         file.readFully(b, off, dlc);
-                        if (getHashCode(b, off, dlc) == hash) {
+                        if (DataStoreUtil.getHashCode(b, off, dlc) == hash) {
                             size = dlc;
                         }
                     }
@@ -233,9 +231,9 @@ public class FileDataStoreQueue implements DataStore {
             try {
                 file.seek(readIndex);
                 file.readFully(header);
-                int fid = getInt(header, 0);
-                int dlc = getInt(header, 4);
-                int negated = getInt(header, 8);
+                int fid = DataStoreUtil.getInt(header, 0);
+                int dlc = DataStoreUtil.getInt(header, 4);
+                int negated = DataStoreUtil.getInt(header, 8);
                 if (fid == FRAME_IDENTIFIER && (dlc == (~negated))) {
                     size = dlc;
                 }
@@ -269,9 +267,9 @@ public class FileDataStoreQueue implements DataStore {
             try {
                 file.seek(readIndex);
                 file.readFully(header);
-                int fid = getInt(header, 0);
-                int dlc = getInt(header, 4);
-                int negated = getInt(header, 8);
+                int fid = DataStoreUtil.getInt(header, 0);
+                int dlc = DataStoreUtil.getInt(header, 4);
+                int negated = DataStoreUtil.getInt(header, 8);
                 isMetaDataUpdated = true;
                 if (fid == FRAME_IDENTIFIER && (dlc == (~negated))) {
                     count = count > 0 ? count - 1 : 0;

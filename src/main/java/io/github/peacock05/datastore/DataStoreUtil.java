@@ -1,4 +1,4 @@
-package peacock.datastore;
+package io.github.peacock05.datastore;
 
 /**
  * Common utility functions used by {@link FileDataStoreQueue} and {@link FileDataStoreStack}

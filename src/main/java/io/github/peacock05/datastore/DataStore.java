@@ -1,4 +1,4 @@
-package peacock.datastore;
+package io.github.peacock05.datastore;
 
 /**
  * DataStore interface provides access to read, write, remove byte[] data from

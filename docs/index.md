@@ -1,37 +1,121 @@
-## Welcome to GitHub Pages
+# Datastore
 
-You can use the [editor on GitHub](https://github.com/peacock05/datastore/edit/main/docs/index.md) to maintain and preview the content for your website in Markdown files.
+Datastore project provides Java library to read, write and delete arrays in FIFO and LIFO order. It uses file to
+back up the arrays
 
-Whenever you commit to this repository, GitHub Pages will run [Jekyll](https://jekyllrb.com/) to rebuild the pages in your site, from the content in your Markdown files.
+Provide simple `write()` `read()` and `remove()` method to store, read and delete the array.
 
-### Markdown
+### Requirements
+#### Minimum Java version
+- Datastore 1.0 and newer: Java 8
 
-Markdown is a lightweight and easy-to-use syntax for styling your writing. It includes conventions for
+### Usage
 
-```markdown
-Syntax highlighted code block
+#### Example using FIFO queue
 
-# Header 1
-## Header 2
-### Header 3
+```java
 
-- Bulleted
-- List
+import DataStore;
 
-1. Numbered
-2. List
+import java.nio.ByteBuffer;
 
-**Bold** and _Italic_ and `Code` text
+public class MainApp {
+    public static void main(String[] args) {
 
-[Link](url) and ![Image](src)
+        try (DataStore store = new FileDataStoreQueue("backup", "/database", 5000000)) {
+
+            // Prepare 1st data
+            ByteBuffer data = ByteBuffer.allocate(120);
+            data.putFloat(23.43f);
+            data.putInt(98);
+            data.putLong(9841893746890L);
+            data.flip();
+
+            // Write 1st data
+            store.write(data.array(), data.position(), data.remaining());
+
+            // Prepare second data
+            data.reset();
+            data.putFloat(29.83f);
+            data.putInt(98345);
+            data.putLong(1498794656586L);
+            data.putFloat(78.83f);
+            data.putInt(8767);
+            data.flip();
+
+            // Write 2nd data 
+            store.write(data.array(), data.position(), data.remaining());
+
+            // Read 1st data 
+            store.read(data.array());
+
+            // Remove 1st data
+            store.remove();
+
+            // Read 2nd data
+            store.read(data.array());
+
+            // Remove 2nd data
+            store.remove();
+
+        }
+    }
+}
+
 ```
 
-For more details see [Basic writing and formatting syntax](https://docs.github.com/en/github/writing-on-github/getting-started-with-writing-and-formatting-on-github/basic-writing-and-formatting-syntax).
+#### Example using LIFO queue
 
-### Jekyll Themes
+```java
+import DataStore;
+import FileDataStoreStack;
 
-Your Pages site will use the layout and styles from the Jekyll theme you have selected in your [repository settings](https://github.com/peacock05/datastore/settings/pages). The name of this theme is saved in the Jekyll `_config.yml` configuration file.
+import java.nio.ByteBuffer;
 
-### Support or Contact
+public class MainApp {
+    public static void main(String[] args) {
 
-Having trouble with Pages? Check out our [documentation](https://docs.github.com/categories/github-pages-basics/) or [contact support](https://support.github.com/contact) and we’ll help you sort it out.
+        try (DataStore store = new FileDataStoreStack("backup", "/database", 5000000)) {
+
+            // Prepare 1st data
+            ByteBuffer data = ByteBuffer.allocate(120);
+            data.putFloat(23.43f);
+            data.putInt(98);
+            data.putLong(9841893746890L);
+            data.flip();
+
+            // Write 1st data
+            store.write(data.array(), data.position(), data.remaining());
+
+            // Prepare second data
+            data.reset();
+            data.putFloat(29.83f);
+            data.putInt(98345);
+            data.putLong(1498794656586L);
+            data.putFloat(78.83f);
+            data.putInt(8767);
+            data.flip();
+
+            // Write 2nd data 
+            store.write(data.array(), data.position(), data.remaining());
+
+            // Read 2nd data 
+            store.read(data.array());
+
+            // Remove 2nd data
+            store.remove();
+
+            // Read 1st data
+            store.read(data.array());
+
+            // Remove 1st data
+            store.remove();
+
+        }
+    }
+}
+```
+
+### License
+
+Distributed under the MIT License. See `LICENSE.txt` for more information.
