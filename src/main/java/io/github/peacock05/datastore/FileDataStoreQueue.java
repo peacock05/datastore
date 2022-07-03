@@ -12,15 +12,15 @@ import java.io.RandomAccessFile;
  * ----------------------------------------------------------------------------
  * | Magic number
  * | Hash
- * | Read Index
- * | Write Index
+ * | Front Index
+ * | Rear Index
  * | Count
  * |
  * <p>
  * | Magic number
  * | Hash
- * | ReadIndex
- * | Write Index
+ * | Front Index
+ * | Rear Index
  * | Count
  * |
  * | 0x5b77f49e, Data length, ~Data length, Data Hash, Data 0, Data 1, ..... Data N
@@ -32,13 +32,13 @@ public class FileDataStoreQueue implements DataStore {
     private final static int MAGIC_NUMBER = 0x34719e13;
     private final static int FRAME_IDENTIFIER = 0x5b77f49e;
     private final RandomAccessFile file;
-    private final byte[] metaData, header;
+    private final byte[] metaBlock, dataBlockHeader;
     private final long capacity;
     private final int offset;
-    private long readIndex;
-    private long writeIndex;
+    private long frontIndex;
+    private long rearIndex;
     private long count;
-    private boolean isMetaDataUpdated;
+    private boolean isMetaBlockUpdated;
     private int errorCode;
     private Exception exception;
 
@@ -51,41 +51,50 @@ public class FileDataStoreQueue implements DataStore {
      * @throws IOException Upon error in creating, reading or writing to the file.
      */
     public FileDataStoreQueue(String queueName, String directory, long limit) throws IOException {
-        metaData = new byte[32];
-        header = new byte[16];
+        metaBlock = new byte[32];
+        dataBlockHeader = new byte[16];
         capacity = limit;
-        offset = metaData.length*2;
+        offset = metaBlock.length*2;
         file = new RandomAccessFile(new File(directory, queueName + ".fifo"), "rw");
         if (!readMetaData()) {
-            readIndex = offset;
-            writeIndex = offset;
+            frontIndex = -1;
+            rearIndex = -1;
             writeMetaData();
         }
     }
 
-    private long getUsedSpace() {
+    private long getUsedSpace0() {
         long used;
-        if (writeIndex >= readIndex) {
-            // |---offset---readIndex----writeIndex----limit-|
-            used = writeIndex - readIndex;
+
+        if(frontIndex == -1){
+            // Queue is not used yet.
+            used = 0;
+        }else if (rearIndex > frontIndex) {
+            // |---offset---frontIndex----rearIndex----limit-|
+            used = rearIndex - frontIndex;
 
         } else {
-            // |---offset---writeIndex----readIndex----limit-|
-            used = (capacity - readIndex) + (writeIndex - offset);
+            // |---offset---rearIndex----frontIndex----limit-|
+            used = (capacity - frontIndex) + (rearIndex - offset);
         }
         return used;
     }
 
 
-    private long getFreeSpace() {
+    private long getFreeSpace0() {
         long free;
 
-        if (writeIndex >= readIndex) {
-            // |---offset---readIndex----writeIndex----limit-|
-            free = (capacity - writeIndex) + (readIndex - offset);
-        } else {
-            // |---offset---writeIndex----readIndex----limit-|
-            free = readIndex - writeIndex;
+        if(frontIndex == -1){
+            free = capacity;
+        }else if (rearIndex > frontIndex) {
+            // |---offset---frontIndex----rearIndex----limit-|
+            free = (capacity - rearIndex) + (frontIndex - offset);
+        } else if (rearIndex < frontIndex){
+            // |---offset---rearIndex----frontIndex----limit-|
+            free = frontIndex - rearIndex;
+        } else{
+            // Both rearIndex and FrontIndex is equal
+            free = capacity;
         }
 
         return free;
@@ -97,16 +106,16 @@ public class FileDataStoreQueue implements DataStore {
         errorCode = ERROR_CODE_OK;
         exception = null;
         for (int i = 0; i < 2; i++) {
-            int pos = i * metaData.length;
+            int pos = i * metaBlock.length;
             try {
                 file.seek(pos);
-                file.readFully(metaData);
-                int magic = DataStoreUtil.getInt(metaData, 0);
-                int hash = DataStoreUtil.getInt(metaData, 4);
-                if (magic == MAGIC_NUMBER && hash == DataStoreUtil.getHashCode(metaData, 8, metaData.length - 8)) {
-                    readIndex = DataStoreUtil.getLong(metaData, 8);
-                    writeIndex = DataStoreUtil.getLong(metaData, 16);
-                    count = DataStoreUtil.getLong(metaData, 24);
+                file.readFully(metaBlock);
+                int magic = DataStoreUtil.getInt(metaBlock, 0);
+                int hash = DataStoreUtil.getInt(metaBlock, 4);
+                if (magic == MAGIC_NUMBER && hash == DataStoreUtil.getHashCode(metaBlock, 8, metaBlock.length - 8)) {
+                    frontIndex = DataStoreUtil.getLong(metaBlock, 8);
+                    rearIndex = DataStoreUtil.getLong(metaBlock, 16);
+                    count = DataStoreUtil.getLong(metaBlock, 24);
                     status = true;
                     break;
                 }
@@ -125,18 +134,18 @@ public class FileDataStoreQueue implements DataStore {
         boolean status = false;
         errorCode = ERROR_CODE_OK;
         exception = null;
-        DataStoreUtil.putInt(MAGIC_NUMBER, metaData, 0);
-        DataStoreUtil.putLong(readIndex, metaData, 8);
-        DataStoreUtil.putLong(writeIndex, metaData, 16);
-        DataStoreUtil.putLong(count, metaData, 24);
-        int hash = DataStoreUtil.getHashCode(metaData, 8, metaData.length - 8);
-        DataStoreUtil.putInt(hash, metaData, 4);
+        DataStoreUtil.putInt(MAGIC_NUMBER, metaBlock, 0);
+        DataStoreUtil.putLong(frontIndex, metaBlock, 8);
+        DataStoreUtil.putLong(rearIndex, metaBlock, 16);
+        DataStoreUtil.putLong(count, metaBlock, 24);
+        int hash = DataStoreUtil.getHashCode(metaBlock, 8, metaBlock.length - 8);
+        DataStoreUtil.putInt(hash, metaBlock, 4);
 
         for (int i = 0; i < 2; i++) {
-            int pos = i * metaData.length;
+            int pos = i * metaBlock.length;
             try {
                 file.seek(pos);
-                file.write(metaData);
+                file.write(metaBlock);
                 file.getFD().sync();
                 status = true;
             } catch (IOException e) {
@@ -148,29 +157,33 @@ public class FileDataStoreQueue implements DataStore {
         return status;
     }
 
+
     @Override
-    public boolean write(byte[] b, int off, int len) {
+    public synchronized boolean write(byte[] b, int off, int len) {
         boolean status = false;
-        int flc = len + header.length;
+        int flc = len + dataBlockHeader.length;
         errorCode = ERROR_CODE_OK;
         exception = null;
-        if (getFreeSpace() >= flc) {
-            DataStoreUtil.putInt(FRAME_IDENTIFIER, header, 0);
-            DataStoreUtil.putInt(len, header, 4);
-            DataStoreUtil.putInt(~len, header, 8);
+
+        if (flc > 0) { // TODO
+            DataStoreUtil.putInt(FRAME_IDENTIFIER, dataBlockHeader, 0);
+            DataStoreUtil.putInt(len, dataBlockHeader, 4);
+            DataStoreUtil.putInt(~len, dataBlockHeader, 8);
             int hash = DataStoreUtil.getHashCode(b, off, len);
-            DataStoreUtil.putInt(hash, header, 12);
+            DataStoreUtil.putInt(hash, dataBlockHeader, 12);
 
             try {
-                file.seek(writeIndex);
-                file.write(header);
+                long nextRearIndex = (rearIndex == -1)? offset:(rearIndex+flc);
+
+                file.seek(nextRearIndex);
+                file.write(dataBlockHeader);
                 file.write(b, off, len);
-                status = true;
-                isMetaDataUpdated = true;
                 count++;
-                writeIndex += flc;
-                if (writeIndex >= capacity)
-                    writeIndex = offset;
+                if (frontIndex == -1)
+                    frontIndex = offset;
+                rearIndex = nextRearIndex;
+                isMetaBlockUpdated = true;
+                status = true;
 
             } catch (IOException e) {
                 errorCode = ERROR_CODE_IO_ERROR;
@@ -187,18 +200,19 @@ public class FileDataStoreQueue implements DataStore {
     }
 
     @Override
-    public int read(byte[] b, int off, int len) {
+    public synchronized int read(byte[] b, int off, int len) {
         int size = -1;
         errorCode = ERROR_CODE_OK;
         exception = null;
-        if (getUsedSpace() >= header.length) {
+        if (off > 0) { //TODO
+            size = 0;
             try {
-                file.seek(readIndex);
-                file.readFully(header);
-                int fid = DataStoreUtil.getInt(header, 0);
-                int dlc = DataStoreUtil.getInt(header, 4);
-                int negated = DataStoreUtil.getInt(header, 8);
-                int hash = DataStoreUtil.getInt(header, 12);
+                file.seek(frontIndex);
+                file.readFully(dataBlockHeader);
+                int fid = DataStoreUtil.getInt(dataBlockHeader, 0);
+                int dlc = DataStoreUtil.getInt(dataBlockHeader, 4);
+                int negated = DataStoreUtil.getInt(dataBlockHeader, 8);
+                int hash = DataStoreUtil.getInt(dataBlockHeader, 12);
                 if (fid == FRAME_IDENTIFIER && (dlc == (~negated))) {
                     if (len >= dlc) {
                         file.readFully(b, off, dlc);
@@ -208,7 +222,6 @@ public class FileDataStoreQueue implements DataStore {
                     }
                 }
             } catch (IOException e) {
-                size = 0;
                 errorCode = ERROR_CODE_IO_ERROR;
                 exception = e;
             }
@@ -223,17 +236,17 @@ public class FileDataStoreQueue implements DataStore {
     }
 
     @Override
-    public int readLength() {
+    public synchronized int readLength() {
         int size = -1;
         errorCode = ERROR_CODE_OK;
         exception = null;
-        if (getUsedSpace() >= header.length) {
+        if (dataBlockHeader.length == 0) { // TODO
             try {
-                file.seek(readIndex);
-                file.readFully(header);
-                int fid = DataStoreUtil.getInt(header, 0);
-                int dlc = DataStoreUtil.getInt(header, 4);
-                int negated = DataStoreUtil.getInt(header, 8);
+                file.seek(frontIndex);
+                file.readFully(dataBlockHeader);
+                int fid = DataStoreUtil.getInt(dataBlockHeader, 0);
+                int dlc = DataStoreUtil.getInt(dataBlockHeader, 4);
+                int negated = DataStoreUtil.getInt(dataBlockHeader, 8);
                 if (fid == FRAME_IDENTIFIER && (dlc == (~negated))) {
                     size = dlc;
                 }
@@ -247,46 +260,46 @@ public class FileDataStoreQueue implements DataStore {
     }
 
     @Override
-    public boolean sync() {
+    public synchronized boolean sync() {
         boolean status = true;
         errorCode = ERROR_CODE_OK;
         exception = null;
-        if (isMetaDataUpdated) {
-            isMetaDataUpdated = false;
+        if (isMetaBlockUpdated) {
+            isMetaBlockUpdated = false;
             status = writeMetaData();
         }
         return status;
     }
 
     @Override
-    public void remove() {
+    public synchronized void remove() {
         errorCode = ERROR_CODE_OK;
         exception = null;
-        if (getUsedSpace() >= header.length) {
+        if (false) { //TODO
 
             try {
-                file.seek(readIndex);
-                file.readFully(header);
-                int fid = DataStoreUtil.getInt(header, 0);
-                int dlc = DataStoreUtil.getInt(header, 4);
-                int negated = DataStoreUtil.getInt(header, 8);
-                isMetaDataUpdated = true;
+                file.seek(frontIndex);
+                file.readFully(dataBlockHeader);
+                int fid = DataStoreUtil.getInt(dataBlockHeader, 0);
+                int dlc = DataStoreUtil.getInt(dataBlockHeader, 4);
+                int negated = DataStoreUtil.getInt(dataBlockHeader, 8);
+                isMetaBlockUpdated = true;
                 if (fid == FRAME_IDENTIFIER && (dlc == (~negated))) {
                     count = count > 0 ? count - 1 : 0;
-                    readIndex += (dlc + header.length);
-                    if (readIndex >= capacity)
-                        readIndex = offset;
+                    frontIndex += (dlc + dataBlockHeader.length);
+                    if (frontIndex >= capacity)
+                        frontIndex = offset;
                 } else {
                     // There is corruption in the file pointers
                     // Let's drop data until write index
                     count = 0;
-                    readIndex = writeIndex;
+                    frontIndex = rearIndex;
                 }
             } catch (EOFException e) {
                 // Pointer reached end-of-file
                 // Reset the index
-                isMetaDataUpdated = true;
-                readIndex = offset;
+                isMetaBlockUpdated = true;
+                frontIndex = offset;
             } catch (IOException e) {
                 errorCode = ERROR_CODE_IO_ERROR;
                 exception = e;
@@ -295,38 +308,38 @@ public class FileDataStoreQueue implements DataStore {
     }
 
     @Override
-    public boolean isEmpty() {
+    public synchronized boolean isEmpty() {
         errorCode = ERROR_CODE_OK;
         exception = null;
-        return getUsedSpace() >= header.length;
+        return false; //TODO
     }
 
     @Override
-    public long count() {
+    public synchronized long count() {
         errorCode = ERROR_CODE_OK;
         exception = null;
         return count;
     }
 
     @Override
-    public long capacity() {
+    public synchronized long capacity() {
         errorCode = ERROR_CODE_OK;
         exception = null;
         return capacity;
     }
 
     @Override
-    public long usage() {
+    public synchronized long usage() {
         errorCode = ERROR_CODE_OK;
         exception = null;
-        return getUsedSpace();
+        return 0; //TODO
     }
 
     @Override
-    public long free() {
+    public synchronized long free() {
         errorCode = ERROR_CODE_OK;
         exception = null;
-        return getFreeSpace();
+        return 0; // TODO
 
     }
 
@@ -341,7 +354,7 @@ public class FileDataStoreQueue implements DataStore {
     }
 
     @Override
-    public void close() throws Exception {
+    public synchronized void close() throws Exception {
         file.getFD().sync();
         file.close();
     }

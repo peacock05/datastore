@@ -9,13 +9,13 @@ import java.io.*;
  * Persistent storage format
  * ----------------------------------------------------------------------------
  * | Magic number
- * | Head Index
+ * | Top Index
  * | 0
  * | Count
  * | Hash
  * |
  * | Magic number
- * | Head Index
+ * | Top Index
  * | 0
  * | Count
  * | Hash
@@ -30,12 +30,12 @@ public class FileDataStoreStack implements DataStore {
     private final static int MAGIC_NUMBER = 0x30A1B608;
     private final static int FRAME_IDENTIFIER = 0x5b77f49e;
     private final RandomAccessFile file;
-    private final byte[] metaData, header;
+    private final byte[] metaBlock, dataBlockHeader;
     private final long capacity;
     private final int offset;
-    private long headIndex;
+    private long topIndex;
     private long count;
-    private boolean isMetaDataUpdated;
+    private boolean isMetaBlockUpdated;
     private int errorCode;
     private Exception exception;
     private final File backUpFile;
@@ -51,29 +51,17 @@ public class FileDataStoreStack implements DataStore {
      * @throws IOException Upon error in creating, reading or writing to the file.
      */
     public FileDataStoreStack(String queueName, String directory, long limit) throws IOException {
-        metaData = new byte[32];
-        header = new byte[16];
+        metaBlock = new byte[32];
+        dataBlockHeader = new byte[16];
         capacity = limit;
-        offset = metaData.length * 2;
-        backUpFile = new File(directory,queueName+".bkp");
+        offset = metaBlock.length * 2;
+        backUpFile = new File(directory, queueName + ".bkp");
         file = new RandomAccessFile(new File(directory, queueName + ".fifo"), "rw");
         if (!readMetaData()) {
-            headIndex = offset;
+            topIndex = 0;
             writeMetaData();
         }
     }
-
-    private long getUsedSpace() {
-        // | ---offset---headIndex---limit-|
-        return headIndex - offset;
-    }
-
-
-    private long getFreeSpace() {
-        // | ---offset---headIndex---limit-|
-        return capacity - headIndex;
-    }
-
 
     private boolean readMetaData() {
 
@@ -81,16 +69,16 @@ public class FileDataStoreStack implements DataStore {
         errorCode = ERROR_CODE_OK;
         exception = null;
         for (int i = 0; i < 2; i++) {
-            int pos = i * metaData.length;
+            int pos = i * metaBlock.length;
             try {
                 file.seek(pos);
-                file.readFully(metaData);
-                int magic = DataStoreUtil.getInt(metaData, 0);
-                int hash = DataStoreUtil.getInt(metaData, 4);
-                if (magic == MAGIC_NUMBER && hash == DataStoreUtil.getHashCode(metaData, 8, metaData.length - 8)) {
-                    headIndex = DataStoreUtil.getLong(metaData, 8);
-                    DataStoreUtil.getLong(metaData, 16); // Reserved
-                    count = DataStoreUtil.getLong(metaData, 24);
+                file.readFully(metaBlock);
+                int magic = DataStoreUtil.getInt(metaBlock, 0);
+                int hash = DataStoreUtil.getInt(metaBlock, 4);
+                if (magic == MAGIC_NUMBER && hash == DataStoreUtil.getHashCode(metaBlock, 8, metaBlock.length - 8)) {
+                    topIndex = DataStoreUtil.getLong(metaBlock, 8);
+                    DataStoreUtil.getLong(metaBlock, 16); // Reserved
+                    count = DataStoreUtil.getLong(metaBlock, 24);
                     status = true;
                     break;
                 }
@@ -109,18 +97,18 @@ public class FileDataStoreStack implements DataStore {
         boolean status = false;
         errorCode = ERROR_CODE_OK;
         exception = null;
-        DataStoreUtil.putInt(MAGIC_NUMBER, metaData, 0);
-        DataStoreUtil.putLong(headIndex, metaData, 8);
-        DataStoreUtil.putLong(0, metaData, 16);
-        DataStoreUtil.putLong(count, metaData, 24);
-        int hash = DataStoreUtil.getHashCode(metaData, 8, metaData.length - 8);
-        DataStoreUtil.putInt(hash, metaData, 4);
+        DataStoreUtil.putInt(MAGIC_NUMBER, metaBlock, 0);
+        DataStoreUtil.putLong(topIndex, metaBlock, 8);
+        DataStoreUtil.putLong(0, metaBlock, 16);
+        DataStoreUtil.putLong(count, metaBlock, 24);
+        int hash = DataStoreUtil.getHashCode(metaBlock, 8, metaBlock.length - 8);
+        DataStoreUtil.putInt(hash, metaBlock, 4);
 
         for (int i = 0; i < 2; i++) {
-            int pos = i * metaData.length;
+            int pos = i * metaBlock.length;
             try {
                 file.seek(pos);
-                file.write(metaData);
+                file.write(metaBlock);
                 file.getFD().sync();
                 status = true;
             } catch (IOException e) {
@@ -133,26 +121,26 @@ public class FileDataStoreStack implements DataStore {
     }
 
     @Override
-    public boolean write(byte[] b, int off, int len) {
+    public synchronized boolean write(byte[] b, int off, int len) {
         boolean status = false;
-        int flc = len + header.length;
+        int flc = len + dataBlockHeader.length;
         errorCode = ERROR_CODE_OK;
         exception = null;
-        if (getFreeSpace() >= flc) {
-            DataStoreUtil.putInt(FRAME_IDENTIFIER, header, 0);
-            DataStoreUtil.putInt(len, header, 4);
-            DataStoreUtil.putInt(~len, header, 8);
+        if ((topIndex + flc) < capacity) {
+            DataStoreUtil.putInt(FRAME_IDENTIFIER, dataBlockHeader, 0);
+            DataStoreUtil.putInt(len, dataBlockHeader, 4);
+            DataStoreUtil.putInt(~len, dataBlockHeader, 8);
             int hash = DataStoreUtil.getHashCode(b, off, len);
-            DataStoreUtil.putInt(hash, header, 12);
+            DataStoreUtil.putInt(hash, dataBlockHeader, 12);
 
             try {
-                file.seek(headIndex);
+                file.seek(topIndex+offset);
                 file.write(b, off, len);
-                file.write(header);
+                file.write(dataBlockHeader);
                 status = true;
-                isMetaDataUpdated = true;
+                isMetaBlockUpdated = true;
                 count++;
-                headIndex += flc;
+                topIndex += flc;
 
             } catch (IOException e) {
                 errorCode = ERROR_CODE_IO_ERROR;
@@ -187,7 +175,7 @@ public class FileDataStoreStack implements DataStore {
     }
 
     @Override
-    public int read(byte[] b, int off, int len) {
+    public synchronized int read(byte[] b, int off, int len) {
         int size = -1;
         errorCode = ERROR_CODE_OK;
         exception = null;
@@ -198,33 +186,33 @@ public class FileDataStoreStack implements DataStore {
                 }
             }
         }else{
-            if (getUsedSpace() >= header.length) {
+            if (topIndex >= (dataBlockHeader.length)) {
                 try {
-                    long headerSeek = headIndex - header.length;
-                    file.seek(headerSeek);
-                    file.readFully(header);
-                    int fid = DataStoreUtil.getInt(header, 0);
-                    int dlc = DataStoreUtil.getInt(header, 4);
-                    int negated = DataStoreUtil.getInt(header, 8);
-                    int hash = DataStoreUtil.getInt(header, 12);
+                    size = 0;
+                    long headerSeek = topIndex - dataBlockHeader.length;
+                    file.seek(headerSeek+offset);
+                    file.readFully(dataBlockHeader);
+                    int fid = DataStoreUtil.getInt(dataBlockHeader, 0);
+                    int dlc = DataStoreUtil.getInt(dataBlockHeader, 4);
+                    int negated = DataStoreUtil.getInt(dataBlockHeader, 8);
+                    int hash = DataStoreUtil.getInt(dataBlockHeader, 12);
                     if (fid == FRAME_IDENTIFIER && (dlc == (~negated))) {
-                        long dataSeek = headIndex - header.length - dlc;
-                        if (len >= dlc && dataSeek >= header.length) {
-                            file.seek(dataSeek);
+                        long dataSeek = topIndex - dataBlockHeader.length - dlc;
+                        if (len >= dlc && dataSeek >= 0) {
+                            file.seek(dataSeek+offset);
                             file.readFully(b, off, dlc);
                             if (DataStoreUtil.getHashCode(b, off, dlc) == hash) {
                                 writeBackUp(b,off,dlc);
-                                headIndex = dataSeek;
+                                topIndex = dataSeek;
                                 backUpLength = dlc;
                                 backUpHash = hash;
                                 backUpStatus = true;
-                                isMetaDataUpdated = true;
+                                isMetaBlockUpdated = true;
                                 size = dlc;
                             }
                         }
                     }
                 } catch (IOException e) {
-                    size = 0;
                     errorCode = ERROR_CODE_IO_ERROR;
                     exception = e;
                 }
@@ -241,21 +229,21 @@ public class FileDataStoreStack implements DataStore {
     }
 
     @Override
-    public int readLength() {
+    public synchronized int readLength() {
         int size = -1;
         errorCode = ERROR_CODE_OK;
         exception = null;
         if(backUpStatus){
             size = backUpLength;
         }else{
-            if (getUsedSpace() >= header.length) {
+            if (topIndex >= dataBlockHeader.length) {
                 try {
-                    long headerSeek = headIndex - header.length;
-                    file.seek(headerSeek);
-                    file.readFully(header);
-                    int fid = DataStoreUtil.getInt(header, 0);
-                    int dlc = DataStoreUtil.getInt(header, 4);
-                    int negated = DataStoreUtil.getInt(header, 8);
+                    long headerSeek = topIndex - dataBlockHeader.length;
+                    file.seek(headerSeek+offset);
+                    file.readFully(dataBlockHeader);
+                    int fid = DataStoreUtil.getInt(dataBlockHeader, 0);
+                    int dlc = DataStoreUtil.getInt(dataBlockHeader, 4);
+                    int negated = DataStoreUtil.getInt(dataBlockHeader, 8);
                     if (fid == FRAME_IDENTIFIER && (dlc == (~negated))) {
                         size = dlc;
                     }
@@ -271,48 +259,48 @@ public class FileDataStoreStack implements DataStore {
     }
 
     @Override
-    public boolean sync() {
+    public synchronized boolean sync() {
         boolean status = true;
         errorCode = ERROR_CODE_OK;
         exception = null;
-        if (isMetaDataUpdated) {
-            isMetaDataUpdated = false;
+        if (isMetaBlockUpdated) {
+            isMetaBlockUpdated = false;
             status = writeMetaData();
         }
         return status;
     }
 
     @Override
-    public void remove() {
+    public synchronized void remove() {
         errorCode = ERROR_CODE_OK;
         exception = null;
         if(backUpStatus){
             count = count > 0? count - 1: 0;
             backUpStatus = false;
         }else{
-            if (getUsedSpace() >= header.length) {
+            if (topIndex >= dataBlockHeader.length) {
                 try {
-                    long headerSeek = headIndex - header.length;
-                    file.seek(headerSeek);
-                    file.readFully(header);
-                    int fid = DataStoreUtil.getInt(header, 0);
-                    int dlc = DataStoreUtil.getInt(header, 4);
-                    int negated = DataStoreUtil.getInt(header, 8);
+                    long headerSeek = topIndex - dataBlockHeader.length;
+                    file.seek(headerSeek+offset);
+                    file.readFully(dataBlockHeader);
+                    int fid = DataStoreUtil.getInt(dataBlockHeader, 0);
+                    int dlc = DataStoreUtil.getInt(dataBlockHeader, 4);
+                    int negated = DataStoreUtil.getInt(dataBlockHeader, 8);
                     if (fid == FRAME_IDENTIFIER && (dlc == (~negated))) {
                         count = count > 0? count - 1: 0;
-                        headIndex = headIndex - header.length - dlc;
-                        if(headIndex < offset)
-                            headIndex = offset;
+                        topIndex = topIndex - dataBlockHeader.length - dlc;
+                        if(topIndex < 0)
+                            topIndex = 0;
 
                     }else{
                         count = 0;
-                        headIndex = offset;
+                        topIndex = 0;
                         errorCode = ERROR_CODE_LN_ERROR;
                         exception = null;
                     }
                 } catch (IOException e) {
                     count = 0;
-                    headIndex = offset;
+                    topIndex = 0;
                     errorCode = ERROR_CODE_IO_ERROR;
                     exception = e;
                 }
@@ -321,38 +309,38 @@ public class FileDataStoreStack implements DataStore {
     }
 
     @Override
-    public boolean isEmpty() {
+    public synchronized boolean isEmpty() {
         errorCode = ERROR_CODE_OK;
         exception = null;
-        return getUsedSpace() >= header.length;
+        return backUpStatus || (topIndex < dataBlockHeader.length);
     }
 
     @Override
-    public long count() {
+    public synchronized long count() {
         errorCode = ERROR_CODE_OK;
         exception = null;
         return count;
     }
 
     @Override
-    public long capacity() {
+    public synchronized long capacity() {
         errorCode = ERROR_CODE_OK;
         exception = null;
         return capacity;
     }
 
     @Override
-    public long usage() {
+    public synchronized long usage() {
         errorCode = ERROR_CODE_OK;
         exception = null;
-        return getUsedSpace();
+        return topIndex;
     }
 
     @Override
-    public long free() {
+    public synchronized long free() {
         errorCode = ERROR_CODE_OK;
         exception = null;
-        return getFreeSpace();
+        return (capacity-topIndex);
     }
 
     @Override
@@ -366,7 +354,7 @@ public class FileDataStoreStack implements DataStore {
     }
 
     @Override
-    public void close() throws Exception {
+    public synchronized void close() throws Exception {
         file.getFD().sync();
         file.close();
     }

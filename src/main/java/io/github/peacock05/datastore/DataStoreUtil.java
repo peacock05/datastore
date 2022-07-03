@@ -74,8 +74,6 @@ class DataStoreUtil {
      * @return hash value
      */
     public static int getHashCode(byte[] a, int off, int len) {
-        if (a == null)
-            return 0;
         int result = 1;
         for (int i = off; i < (off + len); i++) {
             result = 31 * result + a[i];
