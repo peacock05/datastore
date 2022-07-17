@@ -59,6 +59,7 @@ public interface DataStore extends AutoCloseable{
 
     /**
      * Store pointers and data to the disk.
+     * @return {@code true} if the sync is successful
      */
     boolean sync();
 

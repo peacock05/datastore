@@ -7,7 +7,15 @@ Provide simple `write()` `read()` and `remove()` method to store, read and delet
 
 ### Download
 
-[Datastore jar downloads](https://github.com/peacock05?tab=packages&repo_name=datastore) are available from GitHub Packages.
+Maven Central:
+
+```text
+<dependency>
+  <groupId>io.github.peacock05</groupId>
+  <artifactId>datastore</artifactId>
+  <version>1.0</version>
+</dependency>
+```
 
 ### Requirements
 #### Minimum Java version
