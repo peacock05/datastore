@@ -6,7 +6,7 @@
 
     <groupId>io.github.peacock05</groupId>
     <artifactId>datastore</artifactId>
-    <version>1.0-RC3</version>
+    <version>1.0</version>
     <packaging>jar</packaging>
     <name>datastore</name>
     <url>https://github.com/peacock05/datastore</url>

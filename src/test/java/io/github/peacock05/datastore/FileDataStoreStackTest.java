@@ -113,7 +113,7 @@ public class FileDataStoreStackTest {
         Path tempDir = Files.createTempDirectory("datastore");
         Random random = new Random();
         byte[] testData1 = new byte[512], readData1 = new byte[512];
-        byte[] testData2 = new byte[342], readData2 = new byte[342];
+        byte[] testData2 = new byte[342];
         random.nextBytes(testData1);
         random.nextBytes(testData2);
 
@@ -152,6 +152,11 @@ public class FileDataStoreStackTest {
             Assertions.assertTrue(store.write(testData1), "Write do not fail here");
             Assertions.assertTrue(store.write(testData2), "Write do not fail here");
             store.sync();
+            // Read one array, so that the backup get activated
+            Assertions.assertEquals(readData2.length,store.read(readData2));
+            Assertions.assertArrayEquals(testData2,readData2);
+            store.sync();
+
         } catch (Exception e) {
             Assertions.fail(e);
         }

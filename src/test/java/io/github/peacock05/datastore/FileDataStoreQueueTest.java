@@ -186,8 +186,8 @@ public class FileDataStoreQueueTest {
         // Count = (5_000_000 - 32*2)/(16+512)
         // Count = 9,469.5757
 
-        Assertions.assertEquals(9469,writeCount);
-        Assertions.assertEquals(9469,readCount);
+        Assertions.assertEquals(18938,writeCount);
+        Assertions.assertEquals(18938,readCount);
     }
 
 }

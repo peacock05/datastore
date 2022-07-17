@@ -45,59 +45,38 @@ public class FileDataStoreQueue implements DataStore {
 
     /**
      * Create the file based persistent data store to read, write and delete the data in FIFO order.
+     *
      * @param queueName Name of the queue
      * @param directory Directory to store the file
-     * @param limit Maximum amount of space.
+     * @param limit     Maximum amount of space.
      * @throws IOException Upon error in creating, reading or writing to the file.
      */
     public FileDataStoreQueue(String queueName, String directory, long limit) throws IOException {
         metaBlock = new byte[32];
         dataBlockHeader = new byte[16];
         capacity = limit;
-        offset = metaBlock.length*2;
+        offset = metaBlock.length * 2;
         file = new RandomAccessFile(new File(directory, queueName + ".fifo"), "rw");
         if (!readMetaData()) {
-            frontIndex = -1;
-            rearIndex = -1;
+            frontIndex = offset;
+            rearIndex = offset;
+            count = 0;
             writeMetaData();
         }
     }
 
-    private long getUsedSpace0() {
-        long used;
+    private static void writeData(RandomAccessFile file, long index, byte[] header, byte[] b, int off, int len)
+            throws IOException {
 
-        if(frontIndex == -1){
-            // Queue is not used yet.
-            used = 0;
-        }else if (rearIndex > frontIndex) {
-            // |---offset---frontIndex----rearIndex----limit-|
-            used = rearIndex - frontIndex;
+        DataStoreUtil.putInt(FRAME_IDENTIFIER, header, 0);
+        DataStoreUtil.putInt(len, header, 4);
+        DataStoreUtil.putInt(~len, header, 8);
+        int hash = DataStoreUtil.getHashCode(b, off, len);
+        DataStoreUtil.putInt(hash, header, 12);
+        file.seek(index);
+        file.write(header);
+        file.write(b, off, len);
 
-        } else {
-            // |---offset---rearIndex----frontIndex----limit-|
-            used = (capacity - frontIndex) + (rearIndex - offset);
-        }
-        return used;
-    }
-
-
-    private long getFreeSpace0() {
-        long free;
-
-        if(frontIndex == -1){
-            free = capacity;
-        }else if (rearIndex > frontIndex) {
-            // |---offset---frontIndex----rearIndex----limit-|
-            free = (capacity - rearIndex) + (frontIndex - offset);
-        } else if (rearIndex < frontIndex){
-            // |---offset---rearIndex----frontIndex----limit-|
-            free = frontIndex - rearIndex;
-        } else{
-            // Both rearIndex and FrontIndex is equal
-            free = capacity;
-        }
-
-        return free;
     }
 
     private boolean readMetaData() {
@@ -128,7 +107,6 @@ public class FileDataStoreQueue implements DataStore {
         return status;
     }
 
-
     private boolean writeMetaData() {
 
         boolean status = false;
@@ -157,39 +135,47 @@ public class FileDataStoreQueue implements DataStore {
         return status;
     }
 
-
     @Override
     public synchronized boolean write(byte[] b, int off, int len) {
         boolean status = false;
         int flc = len + dataBlockHeader.length;
         errorCode = ERROR_CODE_OK;
         exception = null;
+        try {
+            if (rearIndex < frontIndex) {
+                // 0---offset---rearIndex----frontIndex----limit
+                if ((rearIndex + flc) < frontIndex) {
+                    writeData(file, rearIndex, dataBlockHeader, b, off, len);
+                    count++;
+                    rearIndex = rearIndex + flc;
+                    isMetaBlockUpdated = true;
+                    status = true;
+                }
 
-        if (flc > 0) { // TODO
-            DataStoreUtil.putInt(FRAME_IDENTIFIER, dataBlockHeader, 0);
-            DataStoreUtil.putInt(len, dataBlockHeader, 4);
-            DataStoreUtil.putInt(~len, dataBlockHeader, 8);
-            int hash = DataStoreUtil.getHashCode(b, off, len);
-            DataStoreUtil.putInt(hash, dataBlockHeader, 12);
-
-            try {
-                long nextRearIndex = (rearIndex == -1)? offset:(rearIndex+flc);
-
-                file.seek(nextRearIndex);
-                file.write(dataBlockHeader);
-                file.write(b, off, len);
-                count++;
-                if (frontIndex == -1)
-                    frontIndex = offset;
-                rearIndex = nextRearIndex;
-                isMetaBlockUpdated = true;
-                status = true;
-
-            } catch (IOException e) {
-                errorCode = ERROR_CODE_IO_ERROR;
-                exception = e;
+            } else {
+                // 0---offset---frontIndex----rearIndex----limit
+                // 0 --offset-- frontIndex and rearIndex --- limit
+                if (rearIndex + flc < capacity) {
+                    writeData(file, rearIndex, dataBlockHeader, b, off, len);
+                    count++;
+                    rearIndex = rearIndex + flc;
+                    isMetaBlockUpdated = true;
+                    status = true;
+                } else {
+                    if (frontIndex != offset) {
+                        writeData(file, rearIndex, dataBlockHeader, b, off, len);
+                        count++;
+                        rearIndex = offset;
+                        isMetaBlockUpdated = true;
+                        status = true;
+                    }
+                }
             }
+        } catch (IOException e) {
+            errorCode = ERROR_CODE_IO_ERROR;
+            exception = e;
         }
+
 
         return status;
     }
@@ -204,7 +190,7 @@ public class FileDataStoreQueue implements DataStore {
         int size = -1;
         errorCode = ERROR_CODE_OK;
         exception = null;
-        if (off > 0) { //TODO
+        if (rearIndex != frontIndex) {
             size = 0;
             try {
                 file.seek(frontIndex);
@@ -240,7 +226,8 @@ public class FileDataStoreQueue implements DataStore {
         int size = -1;
         errorCode = ERROR_CODE_OK;
         exception = null;
-        if (dataBlockHeader.length == 0) { // TODO
+        if (rearIndex != frontIndex) {
+            size = 0;
             try {
                 file.seek(frontIndex);
                 file.readFully(dataBlockHeader);
@@ -251,7 +238,6 @@ public class FileDataStoreQueue implements DataStore {
                     size = dlc;
                 }
             } catch (IOException e) {
-                size = 0;
                 errorCode = ERROR_CODE_IO_ERROR;
                 exception = e;
             }
@@ -275,8 +261,7 @@ public class FileDataStoreQueue implements DataStore {
     public synchronized void remove() {
         errorCode = ERROR_CODE_OK;
         exception = null;
-        if (false) { //TODO
-
+        if (rearIndex != frontIndex) {
             try {
                 file.seek(frontIndex);
                 file.readFully(dataBlockHeader);
@@ -311,7 +296,7 @@ public class FileDataStoreQueue implements DataStore {
     public synchronized boolean isEmpty() {
         errorCode = ERROR_CODE_OK;
         exception = null;
-        return false; //TODO
+        return rearIndex == frontIndex;
     }
 
     @Override
@@ -330,16 +315,36 @@ public class FileDataStoreQueue implements DataStore {
 
     @Override
     public synchronized long usage() {
+        long used;
         errorCode = ERROR_CODE_OK;
         exception = null;
-        return 0; //TODO
+        if (rearIndex < frontIndex) {
+            // 0---offset---rearIndex----frontIndex----limit
+            used = (rearIndex + offset) + (capacity - frontIndex);
+
+        } else {
+            // 0---offset---frontIndex----rearIndex----limit
+            // 0 --offset-- frontIndex and rearIndex --- limit
+            used = rearIndex - frontIndex;
+        }
+        return used;
     }
 
     @Override
     public synchronized long free() {
+        long free;
         errorCode = ERROR_CODE_OK;
         exception = null;
-        return 0; // TODO
+        if (rearIndex < frontIndex) {
+            // 0---offset---rearIndex----frontIndex----limit
+            free = frontIndex - rearIndex;
+
+        } else {
+            // 0---offset---frontIndex----rearIndex----limit
+            // 0 --offset-- frontIndex and rearIndex --- limit
+            free = (capacity - rearIndex) + (frontIndex - offset);
+        }
+        return free;
 
     }
 
@@ -354,8 +359,7 @@ public class FileDataStoreQueue implements DataStore {
     }
 
     @Override
-    public synchronized void close() throws Exception {
-        file.getFD().sync();
+    public synchronized void close() throws IOException {
         file.close();
     }
 }
